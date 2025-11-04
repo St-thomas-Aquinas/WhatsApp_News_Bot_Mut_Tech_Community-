@@ -1,38 +1,39 @@
-// node-whatsapp/server.js
-import express from 'express';
-import bodyParser from 'body-parser';
-import wppconnect from '@wppconnect-team/wppconnect';
-import path from 'path';
+const express = require("express");
+const wppconnect = require("@wppconnect-team/wppconnect");
+const bodyParser = require("body-parser");
 
 const app = express();
 app.use(bodyParser.json());
-const PORT = process.env.PORT || 5000;
 
-const SESSION_DIR = process.env.SESSION_DIR || './session';
+let client;
 
-// Create the wppconnect client with session directory
 wppconnect.create({
-  session: 'render-session',
-  folderNameToken: SESSION_DIR,
-  puppeteerOptions: {
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  session: "news-session",
+  catchQR: (base64Qr, asciiQR) => {
+    console.log("Scan this QR to connect WhatsApp:");
+    console.log(asciiQR);
+  },
+  statusFind: (statusSession, session) => {
+    console.log("Status:", statusSession);
   }
-}).then(client => {
-  console.log('✅ WhatsApp connected!');
+})
+.then((cl) => {
+  client = cl;
+  console.log("✅ WhatsApp client connected.");
+})
+.catch((error) => console.error("Error:", error));
 
-  app.post('/send', async (req, res) => {
+app.post("/send", async (req, res) => {
+  try {
     const { message, groupId } = req.body;
-    try {
-      await client.sendText(groupId, message);
-      return res.sendStatus(200);
-    } catch (err) {
-      console.error(err);
-      return res.status(500).send({ error: err.message });
-    }
-  });
-
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-}).catch(err => {
-  console.error('Failed to launch WPPConnect:', err);
-  process.exit(1);
+    if (!client) return res.status(500).json({ error: "Client not ready" });
+    await client.sendText(groupId, message);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+app.get("/", (req, res) => res.send("✅ WhatsApp bot is running"));
+
+app.listen(5000, () => console.log("Server running on port 5000"));
