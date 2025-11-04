@@ -7,11 +7,21 @@ import path from "path";
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// Temporary file to store QR code
+let currentQr = null;
+
 app.use(bodyParser.json());
 
-// Store session in Render’s writable directory
-const SESSION_PATH = "/data/session.json";
+// Serve the current QR image at /qr
+app.get("/qr", (req, res) => {
+  if (!currentQr) return res.send("❌ QR code not yet generated. Check logs.");
+  const img = Buffer.from(currentQr.split(",")[1], "base64");
+  res.writeHead(200, {
+    "Content-Type": "image/png",
+    "Content-Length": img.length,
+  });
+  res.end(img);
+});
 
 // Function to initialize WhatsApp session
 async function startBot() {
@@ -19,11 +29,13 @@ async function startBot() {
 
   const sessionOptions = {
     session: "tech-news-bot",
-    catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
+    catchQR: (base64Qr, asciiQR) => {
       console.log("\n🟢 WhatsApp session started — scan this QR below:\n");
       console.log(asciiQR);
-      console.log("\n🔗 Or open this QR link in browser:\n");
-      console.log(urlCode);
+      console.log(`\n🔗 Or open your hosted QR here: https://${
+        process.env.RENDER_EXTERNAL_HOSTNAME || "localhost:" + PORT
+      }/qr\n`);
+      currentQr = base64Qr; // save for /qr route
     },
     statusFind: (statusSession, session) => {
       console.log(`📱 Status for ${session}: ${statusSession}`);
@@ -31,7 +43,7 @@ async function startBot() {
     onLoadingScreen: (percent, message) => {
       console.log(`⏳ Loading ${percent}%: ${message}`);
     },
-    autoClose: 0, // Keep browser open
+    autoClose: 0,
     headless: true,
     logQR: true,
     puppeteerOptions: {
@@ -42,17 +54,14 @@ async function startBot() {
     tokenStore: "file",
   };
 
-  // Create client session
   const client = await wppconnect.create(sessionOptions);
 
-  // Handle ready state
   client.onConnected(() => console.log("✅ WhatsApp client connected!"));
   client.onDisconnected(() => console.log("❌ WhatsApp disconnected."));
 
-  // Expose send message route
+  // API to send messages to group
   app.post("/send", async (req, res) => {
     const { message, groupId } = req.body;
-
     if (!message || !groupId) {
       return res.status(400).json({ error: "Missing message or groupId" });
     }
@@ -68,10 +77,10 @@ async function startBot() {
   });
 }
 
-// Health check route for Render
+// Health check
 app.get("/healthz", (req, res) => res.send("OK"));
 
-// Start express server
+// Start express
 app.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
   startBot();
