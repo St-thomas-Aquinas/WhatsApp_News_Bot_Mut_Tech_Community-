@@ -1,82 +1,78 @@
 import express from "express";
-import { create, Whatsapp } from "wppconnect";
+import bodyParser from "body-parser";
+import wppconnect from "@wppconnect-team/wppconnect";
 import fs from "fs";
 import path from "path";
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 5000;
 
-const SESSION_PATH = "/data/session"; // Render persistent disk (if configured)
-const SESSION_FILE = path.join(SESSION_PATH, "session.json");
+// Middleware
+app.use(bodyParser.json());
 
-// Create folder if missing
-if (!fs.existsSync(SESSION_PATH)) {
-  fs.mkdirSync(SESSION_PATH, { recursive: true });
-}
+// Store session in Render’s writable directory
+const SESSION_PATH = "/data/session.json";
 
-let client;
+// Function to initialize WhatsApp session
+async function startBot() {
+  console.log("🚀 Starting WhatsApp bot...");
 
-// Function to initialize WhatsApp client
-async function initWhatsApp() {
-  console.log("🚀 Starting WhatsApp session...");
-
-  client = await create({
-    session: "news-session",
-    headless: true,
-    deviceName: "RenderBot",
+  const sessionOptions = {
+    session: "tech-news-bot",
     catchQR: (base64Qr, asciiQR, attempts, urlCode) => {
-      console.log("🟢 WhatsApp session started — scan this QR:\n");
+      console.log("\n🟢 WhatsApp session started — scan this QR below:\n");
       console.log(asciiQR);
-      console.log("\n🔗 Open this link to view QR as an image:\n");
-      console.log(urlCode); // clickable QR URL
+      console.log("\n🔗 Or open this QR link in browser:\n");
+      console.log(urlCode);
     },
     statusFind: (statusSession, session) => {
-      console.log("📱 Status:", statusSession);
+      console.log(`📱 Status for ${session}: ${statusSession}`);
     },
     onLoadingScreen: (percent, message) => {
-      console.log("⏳ Loading:", percent, message);
+      console.log(`⏳ Loading ${percent}%: ${message}`);
     },
-    browserArgs: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--no-zygote",
-    ],
-  });
+    autoClose: 0, // Keep browser open
+    headless: true,
+    logQR: true,
+    puppeteerOptions: {
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    },
+    folderNameToken: "/data/",
+    createPathFileToken: true,
+    tokenStore: "file",
+  };
 
-  // Save session when available
-  client.onStateChange((state) => {
-    console.log("🔄 State changed:", state);
-    if (state === "CONNECTED" || state === "LOGGED") {
-      fs.writeFileSync(SESSION_FILE, JSON.stringify({ session: "news-session" }));
-    }
-  });
-}
+  // Create client session
+  const client = await wppconnect.create(sessionOptions);
 
-// Initialize the client
-initWhatsApp().catch((err) => console.error("❌ Error initializing WhatsApp:", err));
+  // Handle ready state
+  client.onConnected(() => console.log("✅ WhatsApp client connected!"));
+  client.onDisconnected(() => console.log("❌ WhatsApp disconnected."));
 
-// 📨 Endpoint to send message
-app.post("/send", async (req, res) => {
-  try {
+  // Expose send message route
+  app.post("/send", async (req, res) => {
     const { message, groupId } = req.body;
 
     if (!message || !groupId) {
       return res.status(400).json({ error: "Missing message or groupId" });
     }
 
-    if (!client) {
-      return res.status(500).json({ error: "WhatsApp client not ready yet." });
+    try {
+      await client.sendText(groupId + "@g.us", message);
+      console.log(`📨 Message sent to group ${groupId}: ${message}`);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("❌ Error sending message:", error);
+      res.status(500).json({ error: error.message });
     }
+  });
+}
 
-    await client.sendText(groupId, message);
-    res.json({ success: true, sent: message });
-  } catch (err) {
-    console.error("❌ Send error:", err);
-    res.status(500).json({ error: "Failed to send message" });
-  }
+// Health check route for Render
+app.get("/healthz", (req, res) => res.send("OK"));
+
+// Start express server
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+  startBot();
 });
-
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
